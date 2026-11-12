@@ -1,0 +1,141 @@
+# SeatWave's edge gateway: Module 11's file, with the rate limiter added (the "seatwave.ratelimit"
+# block, the Redis connection, and the trusted-balancer settings that make the client's address
+# a usable limit key). Compose sets the SEATWAVE_* addresses; every other value is here.
+server:
+  port: 8080
+  # Let requests in flight finish on SIGTERM; Module 10's balancer drains the gateway first.
+  shutdown: graceful
+  # Behind Module 10's balancer the TCP peer is the balancer. With "native", Tomcat replaces it with
+  # the client's address from X-Forwarded-For, but only when the peer is a trusted proxy below; a
+  # client's own X-Forwarded-For from anywhere else is ignored, so it cannot pick its own key.
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      # The lab's private network: Docker gives a Compose network a subnet from its private pools,
+      # 172.16.0.0/12 or 192.168.0.0/16, whichever is free (a run on 12 November 2026 got
+      # 192.168.144.0/20), so both are listed. In production, exactly the balancer pair's addresses.
+      internal-proxies: "172\\.(1[6-9]|2[0-9]|3[01])\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3}"
+spring:
+  application:
+    name: gateway
+  threads:
+    virtual:
+      # One virtual thread per request: a request waiting on a service holds no platform thread.
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  http:
+    clients:
+      # Every proxied call is bounded (guideline 64). 100 ms to connect inside one network; 2 s for
+      # an answer, above Module 7's 1,750 ms confirm budget.
+      connect-timeout: 100ms
+      read-timeout: 2s
+  data:
+    redis:
+      host: ${SEATWAVE_REDIS_HOST:redis}
+      port: 6379
+      # A limiter that waits longer than this on its store costs every request more than the
+      # check is worth: Redis answers a script in well under a millisecond on one network, so
+      # 50 ms means "down or overloaded", and the policy's when-store-down decides.
+      connect-timeout: 50ms
+      timeout: 50ms
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          routes:
+            # Catalog reads, version 1. GET only: the catalog has no write endpoint to expose.
+            - id: catalog-v1
+              uri: ${SEATWAVE_CATALOG_URI:http://catalog:8080}
+              predicates:
+                - Path=/v1/events,/v1/events/**
+                - Method=GET
+            # Holds and bookings, version 1. The token check happens before any route
+            # (SecurityConfiguration), so this route never sees a request without a valid token.
+            - id: booking-v1
+              uri: ${SEATWAVE_BOOKING_URI:http://booking:8080}
+              predicates:
+                - Path=/v1/holds,/v1/holds/**,/v1/bookings,/v1/bookings/**
+                - Method=GET,POST,DELETE
+            # The mobile backend-for-frontend, owned by the mobile team. The public path carries
+            # the client type; the BFF itself serves /v1/..., so the first segment is cut.
+            - id: mobile-bff-v1
+              uri: ${SEATWAVE_MOBILE_BFF_URI:http://mobile-bff:8080}
+              predicates:
+                - Path=/mobile/v1/**
+                - Method=GET
+              filters:
+                - StripPrefix=1
+seatwave:
+  gateway:
+    # The issuer stand-in of the lab; Module 38 replaces it with the real login service.
+    issuer: http://issuer:8080
+    audience: seatwave-api
+    jwk-set-uri: ${SEATWAVE_JWK_SET_URI:http://issuer:8080/.well-known/jwks.json}
+    # Two clocks never agree exactly; 30 s of allowance, and never more than 60 s.
+    clock-skew: 30s
+    key-set-connect-timeout: 200ms
+    key-set-read-timeout: 500ms
+  ratelimit:
+    # The three gateway instances of this module's lab; a local fallback bucket gets a third.
+    gateway-instances: 3
+    # After a store failure, decide without Redis for this long before trying it again.
+    store-quarantine: 1s
+    # First match wins. Section 7 of the module derives each number.
+    policies:
+      # Holds: a real fan holds at most 4 seats in a minute; a burst of 5 lets the 4 come at once
+      # with one retry, and 1 token every 10 s keeps a script to 6 holds a minute after its burst.
+      # A hold is the scarce action, so when Redis cannot answer, holds are refused, not guessed.
+      - name: holds
+        method: POST
+        path-prefix: /v1/holds
+        key: SUBJECT
+        capacity: 5
+        refill-tokens: 1
+        refill-period: 10s
+        when-store-down: REFUSE
+        is-shadow: false
+      # Seat maps and events, mostly anonymous, keyed by address. Many fans can share one address
+      # (a campus, a mobile carrier's address translation), so the limit is loose: 40 at once and
+      # 20 a second. When Redis is down, each instance allows its third: reads must keep working.
+      - name: seat-reads
+        method: GET
+        path-prefix: /v1/events
+        key: ADDRESS
+        capacity: 40
+        refill-tokens: 20
+        refill-period: 1s
+        when-store-down: LOCAL
+        is-shadow: false
+      # Everything else a fan does (their holds and bookings, the mobile seat screen): per fan.
+      - name: fan-requests
+        method: ANY
+        path-prefix: /
+        key: SUBJECT
+        capacity: 30
+        refill-tokens: 10
+        refill-period: 1s
+        when-store-down: LOCAL
+        is-shadow: false
+management:
+  server:
+    # Health and metrics on their own port, never on the public one.
+    port: 8081
+  health:
+    redis:
+      # The gateway serves with Redis down (each policy says how), so Redis's state is not the
+      # gateway's health: a balancer that read it would take every gateway out at once.
+      enabled: false
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+  metrics:
+    distribution:
+      # Histograms, so p50 and p99 of every route and of the limiter can be read (guideline 68).
+      percentiles-histogram:
+        http.server.requests: true
+        seatwave.ratelimit.added.latency: true
+      # The store call's p50 and p99, also as gauges, so the lab reads them from /actuator/metrics.
+      percentiles:
+        seatwave.ratelimit.added.latency: 0.5,0.99

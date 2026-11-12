@@ -1,0 +1,10 @@
+.gradle/
+build/
+*.log
+.DS_Store
+.idea/
+# The issuer's private keys are generated into build/keys on every machine and never committed.
+*.jwk
+*.p12
+*.pem
+*.key

@@ -1,0 +1,16 @@
+# The lab's issuer stand-in. Compose mounts the key file as a secret.
+server:
+  port: 8080
+spring:
+  application:
+    name: issuer
+  mvc:
+    problemdetails:
+      enabled: true
+seatwave:
+  issuer:
+    issuer: http://issuer:8080
+    audience: seatwave-api
+    # Section 7's brief: tokens valid for 15 minutes.
+    token-lifetime: 15m
+    key-file: ${SEATWAVE_ISSUER_KEY_FILE:build/keys/issuer-keys.json}

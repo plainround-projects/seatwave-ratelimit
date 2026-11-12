@@ -1,0 +1,32 @@
+# The booking stand-in: Module 11's file, with the load shedder's two settings added. The slow-
+# backend lab sets SEATWAVE_BOOKING_READ_DELAY in Compose.
+server:
+  port: 8080
+  shutdown: graceful
+spring:
+  application:
+    name: booking
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  mvc:
+    problemdetails:
+      enabled: true
+  jackson:
+    deserialization:
+      # Bind only known fields (Module 7): a hold with an extra "price" is refused, not ignored.
+      fail-on-unknown-properties: true
+seatwave:
+  booking:
+    # Module 1's hold: 300 seconds.
+    hold-duration: 300s
+    read-delay: ${SEATWAVE_BOOKING_READ_DELAY:0s}
+    # Delayed reads served at once; Module 12's shedding lab sets 8. 10,000 means no line.
+    read-workers: ${SEATWAVE_BOOKING_READ_WORKERS:10000}
+  shedding:
+    # Module 4's in-flight cap of 64 for one node: at 40 ms a hold, about 1,600 holds per second,
+    # the most this instance should accept; beyond it, waiting only makes every hold slower.
+    max-in-flight: ${SEATWAVE_BOOKING_MAX_IN_FLIGHT:64}
+    retry-after: 1s

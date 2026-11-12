@@ -1,0 +1,4 @@
+# The image needs only the Spring Boot jars; build/keys, which holds the issuer's private key,
+# must never be copied into an image.
+*
+!*/build/libs/*.jar

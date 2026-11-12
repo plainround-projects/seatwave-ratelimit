@@ -1,0 +1,32 @@
+# The catalog's settings. Every key is checked at start-up (CatalogProperties); Compose overrides
+# none of them.
+server:
+  port: 8080
+  # Finish requests in flight on SIGTERM instead of cutting them, as Module 10's instances do.
+  shutdown: graceful
+spring:
+  application:
+    name: catalog
+  threads:
+    virtual:
+      # One virtual thread per request: blocking code stays plain, and a slow request holds no
+      # platform thread.
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  mvc:
+    problemdetails:
+      # The framework's own refusals (an unknown path, a missing parameter) also answer RFC 9457.
+      enabled: true
+seatwave:
+  catalog:
+    # Module 1's arena on-sale: event 1, 20 sections (A to T) of 1,000 seats.
+    event-id: 1
+    event-name: Arena on-sale night
+    venue: SeatWave Arena
+    starts-at: 2026-12-04T19:00:00Z
+    sections: 20
+    seats-per-section: 1000
+    # Module 7's pages: 100 by default, at most 500.
+    default-page-size: 100
+    max-page-size: 500

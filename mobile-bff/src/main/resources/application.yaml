@@ -1,0 +1,25 @@
+# The mobile backend-for-frontend. Compose sets the two service addresses; the budgets are here.
+server:
+  port: 8080
+  shutdown: graceful
+spring:
+  application:
+    name: mobile-bff
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  mvc:
+    problemdetails:
+      enabled: true
+seatwave:
+  bff:
+    catalog-uri: ${SEATWAVE_CATALOG_URI:http://catalog:8080}
+    booking-uri: ${SEATWAVE_BOOKING_URI:http://booking:8080}
+    connect-timeout: 100ms
+    # Section 7's budget: the screen's server side gets 150 ms in all. The seat map is essential
+    # and may use it; holds and bookings are optional and get less, so a slow booking service
+    # costs the fan one missing panel, not the screen.
+    catalog-timeout: 150ms
+    booking-timeout: 100ms
